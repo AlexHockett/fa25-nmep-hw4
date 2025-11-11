@@ -79,7 +79,11 @@ class EncoderLayer(nn.Module):
         self.value_length = value_length
 
         # Define any layers you'll need in the forward pass
-        raise NotImplementedError("Need to implement vocab initialization.")
+        self.mha = MultiHeadAttention(num_heads, embedding_dim, qk_length, value_length)
+        self.ffn = FeedForwardNN(embedding_dim, ffn_hidden_dim)
+        self.norm1 = nn.LayerNorm(embedding_dim)
+        self.norm2 = nn.LayerNorm(embedding_dim)
+        self.dropout = nn.Dropout(dropout)
 
     def forward(
         self, x: torch.Tensor, mask: Optional[torch.Tensor] = None
@@ -87,7 +91,12 @@ class EncoderLayer(nn.Module):
         """
         The forward pass of the EncoderLayer.
         """
-        raise NotImplementedError("Need to implement forward pass of EncoderLayer.")
+        attn_out = self.mha(x, x, x, mask)
+        x = self.norm1(x + self.dropout(attn_out))
+
+        ffn_out = self.ffn(x)
+        x = self.norm2(x + self.dropout(ffn_out))
+        return x
 
 
 class Encoder(nn.Module):
@@ -140,12 +149,23 @@ class Encoder(nn.Module):
         # so we'll have to first create some kind of embedding
         # and then use the other layers we've implemented to
         # build out the Transformer encoder.
-        raise NotImplementedError("Need to implement Encoder layers")
+        self.embedding = nn.Embedding(vocab_size, embedding_dim)
+        self.pos_encoding = nn.Parameter(torch.zeros(1, max_length, embedding_dim))
+        self.layers = nn.ModuleList([
+            EncoderLayer(num_heads, embedding_dim, ffn_hidden_dim, qk_length, value_length, dropout)
+            for _ in range(num_layers)
+        ])
+        self.dropout = nn.Dropout(dropout)
 
 
     def forward(self, x: torch.Tensor, src_mask: Optional[torch.Tensor] = None) -> torch.Tensor:
         """
         The forward pass of the Encoder.
         """
-        raise NotImplementedError("Need to implement forward pass of Encoder")
+        x = self.embedding(x) + self.pos_encoding[:, :x.size(1), :]
+        x = self.dropout(x)
 
+        for layer in self.layers:
+            x = layer(x, src_mask)
+
+        return x

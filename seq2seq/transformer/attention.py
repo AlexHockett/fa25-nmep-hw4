@@ -2,6 +2,7 @@ from typing import Optional
 
 import torch
 import torch.nn as nn
+import math
 
 
 class MultiHeadAttention(nn.Module):
@@ -35,7 +36,10 @@ class MultiHeadAttention(nn.Module):
 
         # Define any layers you'll need in the forward pass
         # (hint: number of Linear layers needed != 3)
-        raise NotImplementedError("Need to implement MHA layers")
+        self.W_Q = nn.Linear(embedding_dim, num_heads * qk_length)
+        self.W_K = nn.Linear(embedding_dim, num_heads * qk_length)
+        self.W_V = nn.Linear(embedding_dim, num_heads * value_length)
+        self.W_O = nn.Linear(num_heads * value_length, embedding_dim)
 
     def split_heads(self, x: torch.Tensor, vec_length: int) -> torch.Tensor:
         """
@@ -52,12 +56,12 @@ class MultiHeadAttention(nn.Module):
             torch.Tensor of shape (B, num_heads, T, vec_length)
         """
         B, T, C = x.size()
-
+        x = x.view(B, T, self.num_heads, vec_length)
         assert C // self.num_heads == vec_length, (
             "Input tensor does not have the correct shape for splitting."
         )
 
-        raise NotImplementedError("Need to implement split_heads")
+        return x.permute(0, 2, 1, 3)
 
     def combine_heads(self, x: torch.Tensor) -> torch.Tensor:
         """
@@ -72,8 +76,8 @@ class MultiHeadAttention(nn.Module):
             torch.Tensor of shape (B, T, num_heads * vec_length)
         """
         B, num_heads, T, vec_length = x.size()
-
-        raise NotImplementedError("Need to implement combine_heads")
+        x = x.permute(0, 2, 1, 3).contiguous()
+        return x.view(B, T, num_heads * vec_length)
 
     def scaled_dot_product_attention(
         self,
@@ -92,7 +96,14 @@ class MultiHeadAttention(nn.Module):
             V: torch.Tensor of shape (B, num_heads, T, value_length)
             mask: Optional boolean torch.Tensor, broadcastable to (B, num_heads, T, T).
         """
-        raise NotImplementedError("Need to implement scaled_dot_product_attention")
+        d_k = Q.size(-1)
+        scores = torch.matmul(Q, K.transpose(-2, -1)) / math.sqrt(d_k)
+
+        if mask is not None:
+            scores = scores.masked_fill(mask == 1, float('-inf'))
+
+        attn = torch.softmax(scores, dim=-1)
+        return torch.matmul(attn, V)
 
     def forward(
         self,
@@ -113,7 +124,19 @@ class MultiHeadAttention(nn.Module):
         Returns:
             torch.Tensor of shape (B, T, C)
         """
-        raise NotImplementedError("Need to implement forward pass of MHA")
+        Q_proj = self.W_Q(Q)
+        K_proj = self.W_K(K)
+        V_proj = self.W_V(V)
+
+        Q_heads = self.split_heads(Q_proj, self.qk_length)
+        K_heads = self.split_heads(K_proj, self.qk_length)
+        V_heads = self.split_heads(V_proj, self.value_length)
+
+        out_heads = self.scaled_dot_product_attention(Q_heads, K_heads, V_heads, mask)
+
+        out = self.combine_heads(out_heads)
+
+        return self.W_O(out)
 
 
 
@@ -136,10 +159,12 @@ class FeedForwardNN(nn.Module):
         self.embedding_dim = embedding_dim
 
         # Define any layers you'll need in the forward pass
-        raise NotImplementedError("Need to implement FeedForwardNN layers")
+        self.linear1 = nn.Linear(embedding_dim, hidden_dim)
+        self.relu = nn.ReLU()
+        self.linear2 = nn.Linear(hidden_dim, embedding_dim)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
         The forward pass of the FeedForwardNN.
         """
-        raise NotImplementedError("Need to implement forward pass of FeedForwardNN")
+        return self.linear2(self.relu(self.linear1(x)))
